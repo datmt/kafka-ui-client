@@ -70,16 +70,14 @@ public class MessagePanel extends JPanel {
             }
         });
 
-        refreshButton.addActionListener(e -> refreshMessages());
+        refreshButton.addActionListener(e -> loadMessagesForTopic((String) topicComboBox.getSelectedItem()));
         produceButton.addActionListener(e -> showProduceMessageDialog());
         
         // Add topic selection listener
         topicComboBox.addActionListener(e -> {
             if (e.getActionCommand().equals("comboBoxChanged") && topicComboBox.getSelectedItem() != null) {
                 String selectedTopic = (String) topicComboBox.getSelectedItem();
-                statusBar.showProgress("Loading messages from " + selectedTopic + "...");
-                // Small delay to ensure the progress bar is shown
-                SwingUtilities.invokeLater(this::refreshMessages);
+                loadMessagesForTopic(selectedTopic);
             }
         });
     }
@@ -96,6 +94,19 @@ public class MessagePanel extends JPanel {
         } else {
             messageContentArea.setText("");
         }
+    }
+
+    private void loadMessagesForTopic(String topic) {
+        if (topic == null || topic.isEmpty()) return;
+        
+        // Clear existing messages immediately
+        SwingUtilities.invokeLater(() -> {
+            tableModel.setRowCount(0);
+            messageContentArea.setText("");
+        });
+        
+        statusBar.showProgress("Loading messages from " + topic + "...");
+        refreshMessages();
     }
 
     private void updateTopicList() {
@@ -139,28 +150,20 @@ public class MessagePanel extends JPanel {
         }
 
         String selectedTopic = (String) topicComboBox.getSelectedItem();
-        if (selectedTopic == null) {
-            tableModel.setRowCount(0);
-            messageContentArea.setText("");
+        if (selectedTopic == null || selectedTopic.isEmpty()) {
             statusBar.hideProgress();
             return;
         }
 
-        // Only show progress if it's not already showing
-        if (!statusBar.isProgressVisible()) {
-            statusBar.showProgress("Loading messages from " + selectedTopic + "...");
-        }
-        
-        // Clear existing messages
-        SwingUtilities.invokeLater(() -> {
-            tableModel.setRowCount(0);
-            messageContentArea.setText("");
-        });
-
+        // Create a new worker for loading messages
         SwingWorker<List<ConsumerRecord<String, String>>, Void> worker = new SwingWorker<>() {
             @Override
             protected List<ConsumerRecord<String, String>> doInBackground() throws Exception {
-                return kafkaService.consumeMessages(selectedTopic);
+                try {
+                    return kafkaService.consumeMessages(selectedTopic);
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to load messages: " + e.getMessage(), e);
+                }
             }
 
             @Override
@@ -168,35 +171,47 @@ public class MessagePanel extends JPanel {
                 try {
                     List<ConsumerRecord<String, String>> records = get();
                     SwingUtilities.invokeLater(() -> {
-                        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                        for (ConsumerRecord<String, String> record : records) {
-                            String timestamp = sdf.format(new Date(record.timestamp()));
-                            String key = record.key() != null ? record.key() : "";
-                            String preview = record.value();
-                            if (preview != null && preview.length() > 100) {
-                                preview = preview.substring(0, 97) + "...";
+                        try {
+                            // Clear table again in case more messages were added while loading
+                            tableModel.setRowCount(0);
+                            
+                            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                            for (ConsumerRecord<String, String> record : records) {
+                                String timestamp = sdf.format(new Date(record.timestamp()));
+                                String key = record.key() != null ? record.key() : "";
+                                String preview = record.value();
+                                if (preview != null && preview.length() > 100) {
+                                    preview = preview.substring(0, 97) + "...";
+                                }
+                                tableModel.addRow(new Object[]{
+                                    record.offset(),
+                                    record.partition(),
+                                    timestamp,
+                                    key,
+                                    preview
+                                });
                             }
-                            tableModel.addRow(new Object[]{
-                                record.offset(),
-                                record.partition(),
-                                timestamp,
-                                key,
-                                preview
-                            });
+                            
+                            if (records.isEmpty()) {
+                                statusBar.setStatus("No messages found in topic: " + selectedTopic, false);
+                            } else {
+                                statusBar.setStatus("Loaded " + records.size() + " messages from topic: " + selectedTopic, false);
+                            }
+                        } catch (Exception e) {
+                            statusBar.setStatus("Error displaying messages: " + e.getMessage(), true);
                         }
-                        statusBar.setStatus("Loaded " + records.size() + " messages", false);
                     });
                 } catch (Exception e) {
-                    SwingUtilities.invokeLater(() -> {
-                        statusBar.setStatus("Failed to load messages: " + e.getMessage(), true);
-                    });
+                    SwingUtilities.invokeLater(() -> 
+                        statusBar.setStatus("Failed to load messages: " + e.getMessage(), true)
+                    );
                 } finally {
-                    SwingUtilities.invokeLater(() -> {
-                        statusBar.hideProgress();
-                    });
+                    SwingUtilities.invokeLater(statusBar::hideProgress);
                 }
             }
         };
+        
+        // Execute the worker
         worker.execute();
     }
 

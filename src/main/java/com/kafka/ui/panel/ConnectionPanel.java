@@ -410,6 +410,21 @@ public class ConnectionPanel extends JPanel {
         }
     }
 
+    public void closeCurrentConnection() {
+        if (currentKafkaService != null) {
+            try {
+                log.info("Closing current Kafka connection...");
+                currentKafkaService.close();
+                log.info("Kafka connection closed successfully");
+            } catch (Exception e) {
+                log.error("Error closing Kafka connection", e);
+                throw e;
+            } finally {
+                currentKafkaService = null;
+            }
+        }
+    }
+
     private static class ConnectionListCellRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index,
