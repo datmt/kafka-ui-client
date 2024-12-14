@@ -20,19 +20,23 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 public class KafkaService implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(KafkaService.class);
+    private static final String CONSUMER_GROUP_PREFIX = "kafka-ui-consumer-";
+    private static final String CONSUMER_GROUP_ID = "kafka-ui-consumer-group";
     private final AdminClient adminClient;
     private final KafkaProducer<String, String> producer;
-    private final KafkaConsumer<String, String> consumer;
+    private final Properties consumerProps;
+    private final Map<String, KafkaConsumer<String, String>> consumerCache;
     private boolean connected = false;
-    private String currentTopic = null;
 
     public KafkaService(ConnectionConfig config) {
         log.info("Initializing Kafka service for {} ({})", config.getName(), config.getBootstrapServers());
+        this.consumerCache = new ConcurrentHashMap<>();
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, config.getBootstrapServers());
 
@@ -78,11 +82,10 @@ public class KafkaService implements AutoCloseable {
         props.put(ProducerConfig.ACKS_CONFIG, "all");
 
         // Consumer specific settings
-        Properties consumerProps = new Properties();
+        this.consumerProps = new Properties();
         consumerProps.putAll(props);
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-ui-" + UUID.randomUUID());
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         consumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
         
@@ -98,8 +101,6 @@ public class KafkaService implements AutoCloseable {
             this.adminClient = AdminClient.create(props);
             log.debug("Creating Kafka producer...");
             this.producer = new KafkaProducer<>(props);
-            log.debug("Creating Kafka consumer...");
-            this.consumer = new KafkaConsumer<>(consumerProps);
 
             // Test connection
             log.info("Testing connection by listing topics...");
@@ -111,6 +112,25 @@ public class KafkaService implements AutoCloseable {
             close();
             throw new RuntimeException("Failed to connect to Kafka", e);
         }
+    }
+
+    private synchronized KafkaConsumer<String, String> getConsumer(String topic) {
+        return consumerCache.computeIfAbsent(topic, t -> {
+            log.debug("Creating new Kafka consumer for topic '{}'", t);
+            Properties props = new Properties();
+            props.putAll(consumerProps);
+            // Use different group ID for each topic to avoid offset conflicts
+            props.put(ConsumerConfig.GROUP_ID_CONFIG, CONSUMER_GROUP_PREFIX + t);
+            
+            KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+            consumer.subscribe(Collections.singletonList(t));
+            
+            // Initial poll and seek
+            consumer.poll(Duration.ofMillis(0));
+            consumer.seekToBeginning(consumer.assignment());
+            
+            return consumer;
+        });
     }
 
     public boolean isConnected() {
@@ -171,25 +191,10 @@ public class KafkaService implements AutoCloseable {
         log.info("Consuming messages from topic '{}'", topic);
         List<ConsumerRecord<String, String>> result = new ArrayList<>();
         try {
-            // Only subscribe if we're not already subscribed to this topic
-            if (!topic.equals(currentTopic)) {
-                if (currentTopic != null) {
-                    log.debug("Unsubscribing from previous topic '{}'", currentTopic);
-                    consumer.unsubscribe();
-                }
-                log.debug("Subscribing to topic '{}'", topic);
-                consumer.subscribe(Collections.singletonList(topic));
-                currentTopic = topic;
-                
-                // Initial poll for assignment
-                log.debug("Polling for initial assignment...");
-                consumer.poll(Duration.ofMillis(0));
-                consumer.seekToBeginning(consumer.assignment());
-            } else {
-                // If already subscribed, just seek to beginning
-                log.debug("Already subscribed to '{}', seeking to beginning", topic);
-                consumer.seekToBeginning(consumer.assignment());
-            }
+            KafkaConsumer<String, String> consumer = getConsumer(topic);
+            
+            // Always seek to beginning to get all messages
+            consumer.seekToBeginning(consumer.assignment());
             
             // Poll for messages
             log.debug("Polling for messages with 5 second timeout...");
@@ -207,28 +212,37 @@ public class KafkaService implements AutoCloseable {
             return result;
         } catch (Exception e) {
             log.error("Failed to consume messages from topic '{}': {}", topic, e.getMessage(), e);
+            // If we get a fatal error, clean up the consumer for this topic
+            closeConsumer(topic);
             throw new Exception("Failed to consume messages: " + e.getMessage(), e);
+        }
+    }
+
+    private synchronized void closeConsumer(String topic) {
+        KafkaConsumer<String, String> consumer = consumerCache.remove(topic);
+        if (consumer != null) {
+            try {
+                consumer.unsubscribe();
+                consumer.close();
+                log.debug("Closed and removed Kafka consumer for topic '{}'", topic);
+            } catch (Exception e) {
+                log.warn("Error closing consumer for topic '{}': {}", topic, e.getMessage());
+            }
         }
     }
 
     @Override
     public void close() {
         log.info("Closing Kafka service connections");
+        // Close all cached consumers
+        new ArrayList<>(consumerCache.keySet()).forEach(this::closeConsumer);
         try {
-            if (consumer != null) {
-                consumer.unsubscribe();
-                consumer.close();
-            }
-        } catch (Exception e) {
-            log.warn("Error closing consumer: {}", e.getMessage());
-        }
-        if (producer != null) {
-            try {
+            if (producer != null) {
                 producer.close();
                 log.debug("Closed producer");
-            } catch (Exception e) {
-                log.error("Error closing producer", e);
             }
+        } catch (Exception e) {
+            log.error("Error closing producer", e);
         }
         if (adminClient != null) {
             try {
