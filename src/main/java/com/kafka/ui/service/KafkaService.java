@@ -29,6 +29,7 @@ public class KafkaService implements AutoCloseable {
     private final KafkaProducer<String, String> producer;
     private final KafkaConsumer<String, String> consumer;
     private boolean connected = false;
+    private String currentTopic = null;
 
     public KafkaService(ConnectionConfig config) {
         log.info("Initializing Kafka service for {} ({})", config.getName(), config.getBootstrapServers());
@@ -170,47 +171,56 @@ public class KafkaService implements AutoCloseable {
         log.info("Consuming messages from topic '{}'", topic);
         List<ConsumerRecord<String, String>> result = new ArrayList<>();
         try {
-            // Seek to beginning of topic
-            consumer.subscribe(Collections.singletonList(topic));
-            log.debug("Polling for initial assignment...");
-            consumer.poll(Duration.ofMillis(0)); // Get assignment
-            consumer.seekToBeginning(consumer.assignment());
+            // Only subscribe if we're not already subscribed to this topic
+            if (!topic.equals(currentTopic)) {
+                if (currentTopic != null) {
+                    log.debug("Unsubscribing from previous topic '{}'", currentTopic);
+                    consumer.unsubscribe();
+                }
+                log.debug("Subscribing to topic '{}'", topic);
+                consumer.subscribe(Collections.singletonList(topic));
+                currentTopic = topic;
+                
+                // Initial poll for assignment
+                log.debug("Polling for initial assignment...");
+                consumer.poll(Duration.ofMillis(0));
+                consumer.seekToBeginning(consumer.assignment());
+            } else {
+                // If already subscribed, just seek to beginning
+                log.debug("Already subscribed to '{}', seeking to beginning", topic);
+                consumer.seekToBeginning(consumer.assignment());
+            }
             
-            // Poll for messages with a longer timeout
+            // Poll for messages
             log.debug("Polling for messages with 5 second timeout...");
             ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(5));
             records.forEach(result::add);
             
             log.info("Retrieved {} messages from topic '{}'", result.size(), topic);
-            log.debug("Message offsets: {}", 
-                     result.stream()
-                           .map(r -> String.valueOf(r.offset()))
-                           .collect(Collectors.joining(", ")));
+            if (!result.isEmpty()) {
+                log.debug("Message offsets: {}", 
+                         result.stream()
+                               .map(r -> String.valueOf(r.offset()))
+                               .collect(Collectors.joining(", ")));
+            }
             
             return result;
         } catch (Exception e) {
             log.error("Failed to consume messages from topic '{}': {}", topic, e.getMessage(), e);
             throw new Exception("Failed to consume messages: " + e.getMessage(), e);
-        } finally {
-            try {
-                log.debug("Unsubscribing from topic '{}'", topic);
-                consumer.unsubscribe();
-            } catch (Exception e) {
-                log.warn("Error unsubscribing from topic '{}': {}", topic, e.getMessage());
-            }
         }
     }
 
     @Override
     public void close() {
         log.info("Closing Kafka service connections");
-        if (consumer != null) {
-            try {
+        try {
+            if (consumer != null) {
+                consumer.unsubscribe();
                 consumer.close();
-                log.debug("Closed consumer");
-            } catch (Exception e) {
-                log.error("Error closing consumer", e);
             }
+        } catch (Exception e) {
+            log.warn("Error closing consumer: {}", e.getMessage());
         }
         if (producer != null) {
             try {
