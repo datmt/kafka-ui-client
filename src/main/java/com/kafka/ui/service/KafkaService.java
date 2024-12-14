@@ -33,6 +33,13 @@ public class KafkaService implements AutoCloseable {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, config.getBootstrapServers());
 
+        // Add connection timeout settings
+        props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, "30000");  // 30 seconds
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, "30000");       // 30 seconds
+        props.put("default.api.timeout.ms", "30000");                 // 30 seconds
+        props.put("connections.max.idle.ms", "30000");                // 30 seconds
+        props.put("metadata.max.age.ms", "30000");                    // 30 seconds
+
         // Configure security settings
         props.put("security.protocol", config.getSecurityProtocol().name());
         
@@ -74,6 +81,13 @@ public class KafkaService implements AutoCloseable {
         consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "kafka-ui-" + UUID.randomUUID());
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         consumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        
+        // Add consumer-specific timeout settings
+        consumerProps.put(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "30000");    // 30 seconds
+        consumerProps.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, "30000");        // 30 seconds
+        consumerProps.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, "30000");      // 30 seconds
+        consumerProps.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, "10000");     // 10 seconds
+        consumerProps.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "30000");        // 30 seconds
 
         try {
             this.adminClient = AdminClient.create(props);

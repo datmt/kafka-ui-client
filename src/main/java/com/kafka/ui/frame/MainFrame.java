@@ -3,6 +3,7 @@ package com.kafka.ui.frame;
 import com.kafka.ui.panel.BrokerPanel;
 import com.kafka.ui.panel.ConnectionPanel;
 import com.kafka.ui.panel.MessagePanel;
+import com.kafka.ui.panel.LogPanel;
 import com.kafka.ui.components.StatusBar;
 import com.kafka.ui.service.KafkaService;
 import net.miginfocom.swing.MigLayout;
@@ -14,7 +15,9 @@ public class MainFrame extends JFrame {
     private final ConnectionPanel connectionPanel;
     private final MessagePanel messagePanel;
     private final BrokerPanel brokerPanel;
+    private final LogPanel logPanel;
     private final StatusBar statusBar;
+    private final JTabbedPane tabbedPane;
 
     public MainFrame() {
         setTitle("Kafka UI Client");
@@ -25,13 +28,17 @@ public class MainFrame extends JFrame {
         // Initialize status bar
         statusBar = new StatusBar();
 
-        // Initialize panels with status bar
+        // Initialize panels
         messagePanel = new MessagePanel(statusBar);
         brokerPanel = new BrokerPanel(statusBar);
+        logPanel = new LogPanel();
         connectionPanel = new ConnectionPanel(statusBar, kafkaService -> {
             brokerPanel.setKafkaService(kafkaService);
             messagePanel.setKafkaService(kafkaService);
         });
+
+        // Initialize tabbed pane
+        tabbedPane = new JTabbedPane();
 
         // Set up topic change callback
         brokerPanel.setOnTopicChangeCallback(() -> messagePanel.refreshTopics());
@@ -51,8 +58,16 @@ public class MainFrame extends JFrame {
         leftPanel.add(connectionPanel, "grow");
         leftPanel.add(brokerPanel, "grow");
 
+        // Main content panel with messages
+        JPanel messageContentPanel = new JPanel(new MigLayout("fill"));
+        messageContentPanel.add(messagePanel, "grow");
+
+        // Create tabs
+        tabbedPane.addTab("Messages", messageContentPanel);
+        tabbedPane.addTab("Logs", logPanel);
+
         // Main split pane
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, messagePanel);
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, tabbedPane);
         splitPane.setDividerLocation(300);
         
         add(splitPane, "grow");

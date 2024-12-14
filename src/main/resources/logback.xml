@@ -19,11 +19,15 @@
         </rollingPolicy>
     </appender>
 
+    <appender name="UI" class="com.kafka.ui.components.LogAppender">
+    </appender>
+
     <logger name="com.kafka.ui" level="DEBUG"/>
     <logger name="org.apache.kafka" level="INFO"/>
 
     <root level="DEBUG">
         <appender-ref ref="CONSOLE" />
         <appender-ref ref="FILE" />
+        <appender-ref ref="UI" />
     </root>
 </configuration>
