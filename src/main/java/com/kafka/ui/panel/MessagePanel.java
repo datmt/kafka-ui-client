@@ -76,7 +76,10 @@ public class MessagePanel extends JPanel {
         // Add topic selection listener
         topicComboBox.addActionListener(e -> {
             if (e.getActionCommand().equals("comboBoxChanged") && topicComboBox.getSelectedItem() != null) {
-                refreshMessages();
+                String selectedTopic = (String) topicComboBox.getSelectedItem();
+                statusBar.showProgress("Loading messages from " + selectedTopic + "...");
+                // Small delay to ensure the progress bar is shown
+                SwingUtilities.invokeLater(this::refreshMessages);
             }
         });
     }
