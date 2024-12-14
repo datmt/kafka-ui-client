@@ -85,7 +85,7 @@ public class ConnectionPanel extends JPanel {
         for (ConnectionConfig config : savedConnections) {
             connectionsModel.addElement(config);
         }
-        log.debug("Loaded {} connections", savedConnections.size());
+        log.info("Loaded {} connections", savedConnections.size());
     }
 
     private void saveConnections() {
@@ -95,7 +95,7 @@ public class ConnectionPanel extends JPanel {
             connections.add(connectionsModel.getElementAt(i));
         }
         configService.saveConnections(connections);
-        log.debug("Saved {} connections", connections.size());
+        log.info("Saved {} connections", connections.size());
     }
 
     private void editSelectedConnection() {
@@ -115,6 +115,7 @@ public class ConnectionPanel extends JPanel {
     }
 
     private void showConnectionDialog(String title, ConnectionConfig config) {
+        log.debug("Showing {} dialog", title);
         JDialog dialog = new JDialog((Frame) SwingUtilities.getWindowAncestor(this), title, true);
         dialog.setLayout(new MigLayout("fillx, wrap 2", "[][grow,fill]", ""));
 
@@ -286,16 +287,19 @@ public class ConnectionPanel extends JPanel {
     private void connectToSelected() {
         ConnectionConfig selected = connectionsList.getSelectedValue();
         if (selected == null) {
+            log.warn("No connection selected");
+            showErrorDialog("Connection Error", "Please select a connection first.");
             statusBar.setStatus("Please select a connection", true);
             return;
         }
 
-        log.debug("Connecting to selected connection: {}", selected.getName());
+        log.info("Connecting to selected connection: {}", selected.getName());
         statusBar.showProgress("Connecting to " + selected.getName() + "...");
 
         SwingWorker<KafkaService, Void> worker = new SwingWorker<>() {
             @Override
             protected KafkaService doInBackground() throws Exception {
+                log.debug("Creating new KafkaService instance for {}", selected.getName());
                 KafkaService service = new KafkaService(selected);
                 return service;
             }
@@ -306,6 +310,7 @@ public class ConnectionPanel extends JPanel {
                     KafkaService service = get();
                     if (currentKafkaService != null) {
                         try {
+                            log.debug("Closing existing Kafka service");
                             currentKafkaService.close();
                         } catch (Exception e) {
                             log.warn("Error closing existing Kafka service", e);
@@ -313,17 +318,85 @@ public class ConnectionPanel extends JPanel {
                     }
                     currentKafkaService = service;
                     onConnect.accept(service);
+                    log.info("Successfully connected to {}", selected.getName());
                     statusBar.setStatus("Connected to " + selected.getName(), false);
                 } catch (Exception e) {
                     String errorMsg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
                     log.error("Failed to connect: {}", errorMsg, e);
-                    statusBar.setStatus("Failed to connect: " + errorMsg, true);
+                    
+                    // Create a user-friendly error message
+                    String userErrorMsg = getUserFriendlyErrorMessage(e);
+                    showErrorDialog("Connection Failed", userErrorMsg);
+                    
+                    // Update status bar
+                    statusBar.setStatus("Failed to connect: " + userErrorMsg, true);
+                    
+                    // Clear the current service
+                    currentKafkaService = null;
                 } finally {
                     statusBar.hideProgress();
                 }
             }
         };
         worker.execute();
+    }
+
+    private String getUserFriendlyErrorMessage(Exception e) {
+        Throwable cause = e.getCause() != null ? e.getCause() : e;
+        String originalMessage = cause.getMessage();
+
+        // Common Kafka connection errors and their user-friendly messages
+        if (cause instanceof java.net.ConnectException) {
+            return "Could not connect to the Kafka broker. Please check:\n" +
+                   "• If the broker address is correct\n" +
+                   "• If the broker is running\n" +
+                   "• If there are any network issues or firewalls blocking the connection";
+        } else if (cause instanceof java.net.UnknownHostException) {
+            return "Could not find the Kafka broker. Please check:\n" +
+                   "• If the broker address is spelled correctly\n" +
+                   "• If your DNS is working properly\n" +
+                   "• If you have internet connectivity";
+        } else if (originalMessage != null && originalMessage.contains("SASL")) {
+            return "Authentication failed. Please check:\n" +
+                   "• If your username is correct\n" +
+                   "• If your password is correct\n" +
+                   "• If you're using the correct authentication mechanism";
+        } else if (originalMessage != null && originalMessage.contains("SSL")) {
+            return "SSL/TLS connection failed. Please check:\n" +
+                   "• If your SSL certificates are valid\n" +
+                   "• If the truststore/keystore paths are correct\n" +
+                   "• If the certificate passwords are correct";
+        } else if (cause instanceof java.util.concurrent.TimeoutException) {
+            return "Connection timed out. Please check:\n" +
+                   "• If the broker is responding\n" +
+                   "• If there are any network issues\n" +
+                   "• Try increasing the connection timeout";
+        }
+
+        // If we don't have a specific user-friendly message, make the technical message more readable
+        return "Connection failed: " + (originalMessage != null ? originalMessage : "Unknown error");
+    }
+
+    private void showErrorDialog(String title, String message) {
+        SwingUtilities.invokeLater(() -> {
+            JTextArea textArea = new JTextArea(message);
+            textArea.setEditable(false);
+            textArea.setBackground(null);
+            textArea.setWrapStyleWord(true);
+            textArea.setLineWrap(true);
+            
+            // Calculate preferred size based on message length
+            int preferredWidth = Math.min(400, textArea.getPreferredSize().width);
+            int preferredHeight = Math.min(300, textArea.getPreferredSize().height);
+            textArea.setPreferredSize(new Dimension(preferredWidth, preferredHeight));
+
+            JOptionPane.showMessageDialog(
+                SwingUtilities.getWindowAncestor(this),
+                textArea,
+                title,
+                JOptionPane.ERROR_MESSAGE
+            );
+        });
     }
 
     private void removeSelected() {

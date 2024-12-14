@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<configuration>
+<configuration debug="true">
+    <!-- Console Appender -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
     </appender>
 
+    <!-- File Appender -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${user.home}/kafka-ui.log</file>
         <encoder>
@@ -17,15 +22,33 @@
             <maxHistory>30</maxHistory>
             <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
     </appender>
 
+    <!-- UI Appender -->
     <appender name="UI" class="com.kafka.ui.components.LogAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
     </appender>
 
-    <logger name="com.kafka.ui" level="DEBUG"/>
-    <logger name="org.apache.kafka" level="INFO"/>
+    <!-- Loggers -->
+    <logger name="com.kafka.ui" level="DEBUG" additivity="false">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="FILE" />
+        <appender-ref ref="UI" />
+    </logger>
 
-    <root level="DEBUG">
+    <logger name="org.apache.kafka" level="INFO" additivity="false">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="FILE" />
+        <appender-ref ref="UI" />
+    </logger>
+
+    <!-- Root logger -->
+    <root level="INFO">
         <appender-ref ref="CONSOLE" />
         <appender-ref ref="FILE" />
         <appender-ref ref="UI" />
